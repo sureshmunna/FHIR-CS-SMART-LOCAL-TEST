@@ -19,6 +19,9 @@ namespace smart_local
     {
 
         private const string _defaultFhirServerUrl = "https://launch.smarthealthit.org/v/r4/sim/WzIsIiIsIjI2NjA2MjQiLCJBVVRPIiwwLDAsMCwiIiwiIiwiIiwiIiwiIiwiIiwiIiwwLDEsIiJd/fhir";
+        
+        private static string _authCode = string.Empty;
+        private static string _clientState = string.Empty;
         /// <summary>
         /// program to access a SMART FHIR server with a local webserver for redirection  
         /// </summary>
@@ -84,7 +87,18 @@ namespace smart_local
             }
             return 0;
         }
+        /// <summary>
+        /// set the authorization code and state 
+        /// </summary>
+        /// <param name="code"></param>
+        /// <param name="state"></param>
+        public static void SetAuthCode(string code , string state)
+        {
+            _authCode = code ;
+            _clientState = state;
 
+            System.Console.WriteLine($"Code recieved : {code}");
+        }
         /// <summary>
         /// Launch a URL in the user's default web browser .
         /// </summary>
