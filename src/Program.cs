@@ -1,7 +1,10 @@
 ﻿using System;
 using System.Diagnostics;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Linq;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Reflection.Metadata.Ecma335;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Hosting;
@@ -9,6 +12,7 @@ using Microsoft.AspNetCore.Mvc.Diagnostics;
 using Microsoft.Extensions.Hosting;
 using System.Diagnostics.Eventing.Reader;
 using System.Web;
+using System.Net.Http;
 
 namespace smart_local
 {
@@ -18,10 +22,17 @@ namespace smart_local
     public static class Program
     {
 
+        private const string _clientId = "fhir_demo_id";
         private const string _defaultFhirServerUrl = "https://launch.smarthealthit.org/v/r4/sim/WzIsIiIsIjI2NjA2MjQiLCJBVVRPIiwwLDAsMCwiIiwiIiwiIiwiIiwiIiwiIiwiIiwwLDEsIiJd/fhir";
         
         private static string _authCode = string.Empty;
         private static string _clientState = string.Empty;
+
+        private static string _redirectUrl = string.Empty;
+
+        private static string _tokenUrl = string.Empty;
+
+        private static string _fhirServerUrl =  string.Empty;
         /// <summary>
         /// program to access a SMART FHIR server with a local webserver for redirection  
         /// </summary>
@@ -34,6 +45,7 @@ namespace smart_local
                 fhirServerUrl = _defaultFhirServerUrl;
             }
             System.Console.WriteLine($"  FHIR Server: {fhirServerUrl}");
+            _fhirServerUrl = fhirServerUrl;
 
             Hl7.Fhir.Rest.FhirClient fhirClient = new Hl7.Fhir.Rest.FhirClient(fhirServerUrl);
 
@@ -45,6 +57,7 @@ namespace smart_local
             {
                 System.Console.WriteLine($"Authorize URL: {authorizeUrl}");
                 System.Console.WriteLine($"    Token URL: {tokenUrl}");
+                _tokenUrl = tokenUrl;
 
                  Task.Run(() => CreateHostBuilder().Build().Run())  ;
                 //CreateHostBuilder().Build().Start();
@@ -52,6 +65,7 @@ namespace smart_local
                 int listenPort = GetListenPort().Result; //often it creates dead blocks use below ones
                  //int listenPort = GetListenPort().GetAwaiter().GetResult();
                  System.Console.WriteLine($" Listening on : {listenPort}");
+                 _redirectUrl = $"http://127.0.0.1:{listenPort}";
 
                  //here we are building a string url based on url (see in https://www.hl7.org/fhir/smart-app-launch/app-launch.html)
 
@@ -68,8 +82,8 @@ namespace smart_local
                 string url =
                      $"{authorizeUrl}"+
                      $"?response_type=code"+
-                     $"&client_id=fhir_demo_id" +
-                     $"&redirect_uri={HttpUtility.UrlEncode($"http://127.0.0.1:{listenPort}")}"+
+                     $"&client_id={_clientId}" +
+                     $"&redirect_uri={HttpUtility.UrlEncode(_redirectUrl )}"+
                      $"&scope={HttpUtility.UrlEncode($"openid fhirUser profile launch/patient patient/*.read")}"+
                      $"&state=local_state"+
                      $"&aud={fhirServerUrl}";
@@ -92,13 +106,72 @@ namespace smart_local
         /// </summary>
         /// <param name="code"></param>
         /// <param name="state"></param>
-        public static void SetAuthCode(string code , string state)
+        public static async Task SetAuthCode(string code , string state)
         {
             _authCode = code ;
             _clientState = state;
 
             System.Console.WriteLine($"Code recieved : {code}");
+
+            Dictionary<string, string> requestValues = new Dictionary<string, string>()
+            {
+                {"grant_type" , "authorization_code"},
+                {"code" , code},
+                {"redirect_uri" , _redirectUrl},
+                {"client_id" , _clientId},
+            };
+
+            HttpRequestMessage request = new HttpRequestMessage()
+            {
+                Method = HttpMethod.Post,
+                RequestUri = new Uri (_tokenUrl),
+                Content = new FormUrlEncodedContent(requestValues),
+            };
+
+            HttpClient client = new HttpClient();
+            HttpResponseMessage response = await client.SendAsync(request);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                System.Console.WriteLine($"Failed to exchange code for token");
+                throw new Exception ($"Unauthorized: {response.StatusCode}");
+            }
+
+            string json = await response.Content.ReadAsStringAsync();
+            System.Console.WriteLine($"--------- Autherization Responce --------");
+            System.Console.WriteLine(json);
+            System.Console.WriteLine($"--------- Autherization Responce --------");
+
+            SmartResponse smartResponse = JsonSerializer.Deserialize<SmartResponse>(json);
+
+            Task.Run(() => DoSomethingWithToken(smartResponse));
         }
+
+        /// <summary>
+        /// Use a SMART token with the FHIR Net API
+        /// </summary>
+        /// <param name="smartResponse"></param>
+        public static void DoSomethingWithToken(SmartResponse smartResponse)
+        {
+            if(smartResponse == null)
+            {
+                throw new ArgumentNullException(nameof(smartResponse));
+            }
+            if(string.IsNullOrEmpty(smartResponse.AccessToken)){
+                throw new ArgumentNullException("SMART Access Token is required!");
+            }
+
+            Hl7.Fhir.Rest.FhirClient fhirClient = new Hl7.Fhir.Rest.FhirClient(_fhirServerUrl);
+            fhirClient.OnBeforeRequest += (object sender ,Hl7.Fhir.Rest.BeforeRequestEventArgs e) =>
+            {
+                e.RawRequest.Headers.Add("Authorization" , $"Bearer {smartResponse.AccessToken}");
+            };
+
+            Hl7.Fhir.Model.Patient patient = fhirClient.Read<Hl7.Fhir.Model.Patient>($"Patient/{smartResponse.PatientId}");
+
+            System.Console.WriteLine($"Read back patient : {patient.Name[0].ToString()}");
+        }
+
         /// <summary>
         /// Launch a URL in the user's default web browser .
         /// </summary>

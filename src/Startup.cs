@@ -61,7 +61,7 @@ namespace smart_local
                     }
                     // await context.Response.WriteAsync("Hello World!");
 
-                    Program.SetAuthCode(code, state);
+                    Task.Run(() => Program.SetAuthCode(code, state)) ;
                     await context.Response.WriteAsync("Code received , you may close this window.");
                 });
             });
